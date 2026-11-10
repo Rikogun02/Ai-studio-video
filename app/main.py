@@ -12,7 +12,7 @@ from typing import Dict, Any
 import requests
 import edge_tts
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field\nfrom app.termux_package import build_package
@@ -27,7 +27,7 @@ for folder in (JOBS, TMP, DATA / "assets", DATA / "music", DATA / "packages"):
 
 app = FastAPI(title="AI Company Video Studio", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
-STATE: Dict[str, Dict[str, Any]] = {}
+STATE: Dict[str, Dict[str, Any]] = {}\nPACKAGE_STATE: Dict[str, Dict[str, Any]] = {}
 LOCK = Lock()
 BUSY = False
 
@@ -265,20 +265,42 @@ def download(job_id: str, x_studio_token: str = Header(default="")):
     return FileResponse(path,media_type="video/mp4",filename=f"video-{job_id}.mp4")
 
 
-@app.post("/api/packages")
-async def create_termux_package(req: CreateRequest, x_studio_token: str = Header(default="")):
-    """Prepare script, narration, subtitles and relevant video clips for local Termux rendering."""
-    auth(x_studio_token)
-    package_id = uuid.uuid4().hex[:12]
+async def prepare_termux_package(package_id: str, topic: str, style: str):
     output = DATA / "packages" / f"{package_id}.zip"
-    script = make_script(req.topic, req.style)
-    subtitles = make_srt(script, 60)
     try:
-        await build_package(package_id, req.topic, req.style, script, subtitles, output,
+        script = make_script(topic, style)
+        subtitles = make_srt(script, 60)
+        await build_package(package_id, topic, style, script, subtitles, output,
                             os.getenv("VOICE", "id-ID-ArdiNeural"))
+        PACKAGE_STATE[package_id] = {"status": "completed", "message": "Paket produksi siap diunduh"}
     except Exception as exc:
         if output.exists():
             output.unlink()
-        raise HTTPException(502, f"Gagal menyiapkan paket: {str(exc)}")
-    return FileResponse(output, media_type="application/zip",
-                        filename=f"ai-company-video-{package_id}.zip")
+        PACKAGE_STATE[package_id] = {"status": "failed", "message": str(exc)}
+
+@app.post("/api/packages")
+async def create_termux_package(req: CreateRequest, background_tasks: BackgroundTasks,
+                                x_studio_token: str = Header(default="")):
+    """Queue production package preparation; final rendering stays on Termux."""
+    auth(x_studio_token)
+    package_id = uuid.uuid4().hex[:12]
+    PACKAGE_STATE[package_id] = {"status": "processing", "message": "Mencari klip video dan menyiapkan narasi"}
+    background_tasks.add_task(prepare_termux_package, package_id, req.topic, req.style)
+    return {"job_id": package_id, "status": "processing"}
+
+@app.get("/api/packages/{package_id}")
+def get_termux_package(package_id: str, x_studio_token: str = Header(default="")):
+    auth(x_studio_token)
+    if not re.fullmatch(r"[a-f0-9]{12}", package_id):
+        raise HTTPException(400, "ID paket tidak valid")
+    return PACKAGE_STATE.get(package_id, {"status": "unknown", "message": "Paket tidak ditemukan di sesi server ini"})
+
+@app.get("/api/packages/{package_id}/download")
+def download_termux_package(package_id: str, x_studio_token: str = Header(default="")):
+    auth(x_studio_token)
+    if not re.fullmatch(r"[a-f0-9]{12}", package_id):
+        raise HTTPException(400, "ID paket tidak valid")
+    path = DATA / "packages" / f"{package_id}.zip"
+    if not path.is_file():
+        raise HTTPException(404, "Paket belum tersedia")
+    return FileResponse(path, media_type="application/zip", filename=f"ai-company-video-{package_id}.zip")
