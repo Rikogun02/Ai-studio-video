@@ -5,6 +5,7 @@ import json
 import shutil
 import asyncio
 import subprocess
+import textwrap
 from pathlib import Path
 from threading import Lock
 from typing import Dict, Any
@@ -77,34 +78,39 @@ def make_script(topic: str, style: str) -> str:
             "Fokus pada proses. Jaga prinsip. Biarkan hasil mengikuti usaha yang konsisten.")
 
 def make_srt(script: str, duration: int = 60) -> str:
-    # Divide narration into readable caption chunks and distribute them across 60 seconds.
-    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", script) if x.strip()]
-    if not sentences:
-        sentences = [script.strip()]
+    # Keep each subtitle cue to at most two readable lines.
+    words = script.split()
     chunks = []
-    for sentence in sentences:
-        words = sentence.split()
-        while len(words) > 12:
-            chunks.append(" ".join(words[:12]))
-            words = words[12:]
-        if words:
-            chunks.append(" ".join(words))
+    current = []
+    for word in words:
+        candidate = current + [word]
+        wrapped = textwrap.wrap(" ".join(candidate), width=30, break_long_words=False)
+        if len(wrapped) > 2 and current:
+            chunks.append(" ".join(current))
+            current = [word]
+        else:
+            current = candidate
+    if current:
+        chunks.append(" ".join(current))
     if not chunks:
         chunks = [script.strip()]
-    weights = [max(1, len(x.split())) for x in chunks]
+
+    weights = [max(1, len(chunk.split())) for chunk in chunks]
     total = sum(weights)
     cursor = 0.0
     entries = []
+
+    def stamp(value):
+        ms = int(round(value * 1000))
+        hours, ms = divmod(ms, 3600000)
+        minutes, ms = divmod(ms, 60000)
+        seconds, millis = divmod(ms, 1000)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
     for index, (chunk, weight) in enumerate(zip(chunks, weights), 1):
         start = cursor
         cursor += duration * weight / total
         end = min(float(duration), cursor)
-        def stamp(value):
-            ms = int(round(value * 1000))
-            hours, ms = divmod(ms, 3600000)
-            minutes, ms = divmod(ms, 60000)
-            seconds, millis = divmod(ms, 1000)
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
         entries.append(f"{index}\n{stamp(start)} --> {stamp(end)}\n{chunk}\n")
     return "\n".join(entries)
 
@@ -286,7 +292,7 @@ async def create_termux_package(req: CreateRequest, background_tasks: Background
     """Queue production package preparation; final rendering stays on Termux."""
     auth(x_studio_token)
     package_id = uuid.uuid4().hex[:12]
-    PACKAGE_STATE[package_id] = {"status": "processing", "message": "Mencari klip video dan menyiapkan narasi"}
+    PACKAGE_STATE[package_id] = {"status": "processing", "message": "Meminta klip AI ke Magic Hour dan menyiapkan narasi"}
     background_tasks.add_task(prepare_termux_package, package_id, req.topic, req.style)
     return {"job_id": package_id, "status": "processing"}
 
