@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field\nfrom app.termux_package import build_package
+from pydantic import BaseModel, Field
+from app.termux_package import build_package
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,7 +28,8 @@ for folder in (JOBS, TMP, DATA / "assets", DATA / "music", DATA / "packages"):
 
 app = FastAPI(title="AI Company Video Studio", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
-STATE: Dict[str, Dict[str, Any]] = {}\nPACKAGE_STATE: Dict[str, Dict[str, Any]] = {}
+STATE: Dict[str, Dict[str, Any]] = {}
+PACKAGE_STATE: Dict[str, Dict[str, Any]] = {}
 LOCK = Lock()
 BUSY = False
 
