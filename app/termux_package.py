@@ -8,23 +8,24 @@ import edge_tts
 
 API = "https://commons.wikimedia.org/w/api.php"
 HEADERS = {
-    "User-Agent": "AICompanyVideoStudio/1.1 (https://github.com/Rikogun02/Ai-studio-video)",
+    "User-Agent": "AICompanyVideoStudio/2.0 (https://github.com/Rikogun02/Ai-studio-video)",
     "Accept": "application/json",
 }
 VIDEO_EXTS = (".mp4", ".webm", ".ogv", ".ogg", ".mov")
-MAX_CLIP_BYTES = 35 * 1024 * 1024
+MAX_CLIP_BYTES = 18 * 1024 * 1024
+CLIP_COUNT = 12
 
 
 def topic_search_terms(topic: str):
     low = topic.lower()
     if any(x in low for x in ("stoik", "stoic", "tenang", "mental", "disiplin", "motivasi", "emosi")):
-        return ["sunrise", "mountain", "ocean", "forest", "walking", "meditation", "sunset", "waves", "nature"]
+        return ["sunrise", "mountain", "ocean", "forest", "walking", "meditation", "sunset", "waves", "nature", "calm", "river", "clouds"]
     if any(x in low for x in ("bisnis", "usaha", "uang", "kerja", "karier", "business")):
-        return ["business", "office", "teamwork", "computer", "city", "factory", "working", "technology"]
+        return ["business", "office", "teamwork", "computer", "city", "factory", "working", "technology", "meeting", "industry", "entrepreneur", "commerce"]
     if any(x in low for x in ("trading", "saham", "crypto", "kripto", "bitcoin", "market")):
-        return ["stock exchange", "financial market", "computer", "data center", "city", "technology", "business"]
-    words = [w for w in topic.split() if len(w) > 4][:3]
-    return words + ["nature", "city", "people", "technology", "landscape"]
+        return ["stock exchange", "financial market", "computer", "data center", "city", "technology", "business", "trading floor", "charts", "finance", "server", "economy"]
+    words = [w for w in topic.split() if len(w) > 4][:4]
+    return words + ["nature", "city", "people", "technology", "landscape", "work", "ocean", "forest"]
 
 
 def _search_video_pages(term: str):
@@ -69,10 +70,11 @@ def _download_clip(url: str, target: Path):
     return True
 
 
-def find_video_clips(topic: str, folder: Path, limit: int = 3):
+def find_video_clips(topic: str, folder: Path, limit: int = CLIP_COUNT):
     found, seen = [], set()
     errors = []
-    for term in topic_search_terms(topic):
+    terms = topic_search_terms(topic)
+    for term in terms:
         if len(found) >= limit:
             break
         try:
@@ -93,7 +95,7 @@ def find_video_clips(topic: str, folder: Path, limit: int = 3):
             suffix = Path(clean_url).suffix.lower()
             if suffix not in VIDEO_EXTS:
                 suffix = ".webm" if "webm" in mime else ".ogv"
-            target = folder / f"clip_{len(found)+1}{suffix}"
+            target = folder / f"clip_{len(found)+1:02d}{suffix}"
             try:
                 if not _download_clip(url, target):
                     continue
@@ -119,11 +121,11 @@ async def build_package(job_id: str, topic: str, style: str, script: str, subtit
                         output_zip: Path, voice: str = "id-ID-ArdiNeural"):
     with TemporaryDirectory(prefix="aivideo_") as tmp:
         folder = Path(tmp)
-        clips = find_video_clips(topic, folder, 3)
-        if len(clips) < 3:
+        clips = find_video_clips(topic, folder, CLIP_COUNT)
+        if len(clips) < CLIP_COUNT:
             raise RuntimeError(
-                f"Hanya ditemukan {len(clips)} klip video yang cocok. Butuh 3 klip. "
-                "Tidak memakai foto acak. Coba topik lebih sederhana atau ulangi beberapa saat lagi."
+                f"Hanya ditemukan {len(clips)} dari 12 klip video berbeda yang cocok. "
+                "Tidak memakai foto acak atau mengulang klip. Coba topik lebih sederhana atau ulangi nanti."
             )
         audio = folder / "voice.mp3"
         await edge_tts.Communicate(script, voice).save(str(audio))
@@ -132,7 +134,7 @@ async def build_package(job_id: str, topic: str, style: str, script: str, subtit
         attribution = {
             "job_id": job_id, "topic": topic, "style": style,
             "duration_seconds": 60, "resolution": "720x1280",
-            "visual_source": "Wikimedia Commons",
+            "clip_count": CLIP_COUNT, "visual_source": "Wikimedia Commons",
             "clips": [{k: v for k, v in item.items() if k != "file"} for item in clips],
         }
         (folder / "metadata.json").write_text(
