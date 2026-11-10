@@ -1,4 +1,6 @@
 import json
+import os
+import time
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -6,54 +8,78 @@ from tempfile import TemporaryDirectory
 import requests
 import edge_tts
 
-API = "https://commons.wikimedia.org/w/api.php"
-HEADERS = {
-    "User-Agent": "AICompanyVideoStudio/2.0 (https://github.com/Rikogun02/Ai-studio-video)",
-    "Accept": "application/json",
-}
-VIDEO_EXTS = (".mp4", ".webm", ".ogv", ".ogg", ".mov")
-MAX_CLIP_BYTES = 18 * 1024 * 1024
-CLIP_COUNT = 12
+MAGIC_API = "https://api.magichour.ai"
+CLIP_COUNT = 2
+CLIP_SECONDS = 5
+ESTIMATED_CREDITS_PER_SECOND = 24
+RESERVE_CREDITS = 72
+MAX_CLIP_BYTES = 50 * 1024 * 1024
+POLL_SECONDS = 10
+MAX_WAIT_SECONDS = 20 * 60
 
 
-def topic_search_terms(topic: str):
-    low = topic.lower()
-    if any(x in low for x in ("stoik", "stoic", "tenang", "mental", "disiplin", "motivasi", "emosi")):
-        return ["sunrise", "mountain", "ocean", "forest", "walking", "meditation", "sunset", "waves", "nature", "calm", "river", "clouds"]
-    if any(x in low for x in ("bisnis", "usaha", "uang", "kerja", "karier", "business")):
-        return ["business", "office", "teamwork", "computer", "city", "factory", "working", "technology", "meeting", "industry", "entrepreneur", "commerce"]
-    if any(x in low for x in ("trading", "saham", "crypto", "kripto", "bitcoin", "market")):
-        return ["stock exchange", "financial market", "computer", "data center", "city", "technology", "business", "trading floor", "charts", "finance", "server", "economy"]
-    words = [w for w in topic.split() if len(w) > 4][:4]
-    return words + ["nature", "city", "people", "technology", "landscape", "work", "ocean", "forest"]
+def _headers():
+    key = os.getenv("MAGIC_HOUR_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("MAGIC_HOUR_API_KEY belum terpasang di server.")
+    return {"Authorization": "Bearer " + key, "Accept": "application/json"}
 
 
-def _search_video_pages(term: str):
-    params = {
-        "action": "query",
-        "format": "json",
-        "generator": "search",
-        "gsrsearch": f"filetype:video {term}",
-        "gsrnamespace": 6,
-        "gsrlimit": 50,
-        "prop": "imageinfo",
-        "iiprop": "url|mime|size|extmetadata",
-    }
-    response = requests.get(API, params=params, headers=HEADERS, timeout=30)
+def _account():
+    response = requests.get(
+        MAGIC_API + "/v1/account", headers=_headers(), timeout=30
+    )
+    if response.status_code == 401:
+        raise RuntimeError("API key Magic Hour tidak valid.")
     response.raise_for_status()
     data = response.json()
-    if data.get("error"):
-        raise RuntimeError(data["error"].get("info", "Commons API error"))
-    return list((data.get("query") or {}).get("pages", {}).values())
+    if not isinstance(data.get("credits"), int):
+        raise RuntimeError("Saldo kredit Magic Hour tidak terbaca.")
+    return data
 
 
-def _download_clip(url: str, target: Path):
-    with requests.get(url, headers=HEADERS, timeout=(15, 60), stream=True) as response:
+def _prompts(topic: str, style: str):
+    clean_topic = " ".join(topic.split())[:160]
+    low = clean_topic.lower()
+    visual_style = (
+        "photorealistic cinematic documentary, natural human movement, "
+        "soft natural lighting, subtle camera movement, realistic details, "
+        "vertical 9:16 composition, no text, no subtitles, no logos, no watermark"
+    )
+    if any(word in low for word in ("stoik", "stoic", "tenang", "emosi", "disiplin", "motivasi")):
+        scenes = [
+            "A thoughtful Southeast Asian adult sitting quietly beside a window at dawn, reflecting before starting the day, calm intimate atmosphere",
+            "The same type of adult walking with purpose along a misty mountain path at sunrise, gaining perspective and confidence, wide cinematic landscape",
+        ]
+    elif any(word in low for word in ("bisnis", "usaha", "karier", "kerja", "business", "uang")):
+        scenes = [
+            "A focused small business owner planning work at a tidy desk, reviewing notes and preparing the day, realistic modern workspace",
+            "A small business owner actively working with a team in a bright workshop or office, purposeful collaboration and steady progress",
+        ]
+    elif any(word in low for word in ("trading", "saham", "crypto", "kripto", "bitcoin", "market")):
+        scenes = [
+            "A disciplined trader studying financial charts on multiple monitors in a realistic quiet trading workspace, focused and analytical",
+            "A close cinematic view of a trader calmly reviewing market data and writing a risk plan, realistic screens with abstract charts and no readable text",
+        ]
+    else:
+        scenes = [
+            f"A realistic cinematic scene that clearly illustrates the central idea of {clean_topic}, a person thoughtfully engaging with the subject in a believable setting",
+            f"A distinct follow-up scene showing a practical positive outcome or meaningful action related to {clean_topic}, natural people and environment",
+        ]
+    return [
+        f"{scene}. Theme: {clean_topic}. Visual direction: {style}. {visual_style}."
+        for scene in scenes
+    ]
+
+
+def _download_video(url: str, target: Path):
+    total = 0
+    with requests.get(url, headers={"User-Agent": "AICompanyVideoStudio/3.0"},
+                      timeout=(20, 120), stream=True) as response:
         response.raise_for_status()
         length = response.headers.get("Content-Length")
         if length and int(length) > MAX_CLIP_BYTES:
-            return False
-        total = 0
+            raise RuntimeError("Ukuran klip AI melebihi batas 50 MB.")
         with target.open("wb") as output:
             for chunk in response.iter_content(chunk_size=256 * 1024):
                 if not chunk:
@@ -62,83 +88,123 @@ def _download_clip(url: str, target: Path):
                 if total > MAX_CLIP_BYTES:
                     output.close()
                     target.unlink(missing_ok=True)
-                    return False
+                    raise RuntimeError("Ukuran klip AI melebihi batas 50 MB.")
                 output.write(chunk)
-        if total < 100_000:
+    if total < 100_000:
+        target.unlink(missing_ok=True)
+        raise RuntimeError("File video dari Magic Hour terlalu kecil atau tidak valid.")
+    with target.open("rb") as source:
+        if source.read(8)[4:8] != b"ftyp":
             target.unlink(missing_ok=True)
-            return False
-    return True
+            raise RuntimeError("Hasil unduhan bukan file MP4 yang valid.")
 
 
-def find_video_clips(topic: str, folder: Path, limit: int = CLIP_COUNT):
-    found, seen = [], set()
-    errors = []
-    terms = topic_search_terms(topic)
-    for term in terms:
-        if len(found) >= limit:
-            break
-        try:
-            pages = _search_video_pages(term)
-        except Exception as exc:
-            errors.append(f"{term}: {str(exc)[:120]}")
-            continue
-        for page in pages:
-            info = (page.get("imageinfo") or [{}])[0]
-            url = info.get("url", "")
-            mime = (info.get("mime") or "").lower()
-            clean_url = url.lower().split("?")[0]
-            if not url or url in seen:
-                continue
-            if not (mime.startswith("video/") or clean_url.endswith(VIDEO_EXTS)):
-                continue
-            seen.add(url)
-            suffix = Path(clean_url).suffix.lower()
-            if suffix not in VIDEO_EXTS:
-                suffix = ".webm" if "webm" in mime else ".ogv"
-            target = folder / f"clip_{len(found)+1:02d}{suffix}"
-            try:
-                if not _download_clip(url, target):
-                    continue
-                meta = info.get("extmetadata") or {}
-                found.append({
-                    "file": str(target),
-                    "title": page.get("title", ""),
-                    "source": info.get("descriptionurl", url),
-                    "license": (meta.get("LicenseShortName") or {}).get("value", "Check source page"),
-                    "artist": (meta.get("Artist") or {}).get("value", ""),
-                })
-                if len(found) >= limit:
-                    break
-            except Exception:
-                target.unlink(missing_ok=True)
-                continue
-    if len(found) < limit and errors and not found:
-        raise RuntimeError("Pencarian Wikimedia Commons gagal: " + "; ".join(errors[:2]))
-    return found
+def _create_clip(prompt: str, name: str, target: Path):
+    expected = CLIP_SECONDS * ESTIMATED_CREDITS_PER_SECOND
+    account = _account()
+    if account["credits"] < expected + RESERVE_CREDITS:
+        raise RuntimeError(
+            f"Saldo {account['credits']} kredit tidak cukup untuk estimasi "
+            f"{expected} kredit sambil menyisakan cadangan {RESERVE_CREDITS}."
+        )
+
+    payload = {
+        "end_seconds": float(CLIP_SECONDS),
+        "aspect_ratio": "9:16",
+        "style": {"prompt": prompt},
+        "name": name,
+        "model": "default",
+        "resolution": "480p",
+    }
+    response = requests.post(
+        MAGIC_API + "/v1/text-to-video",
+        headers={**_headers(), "Content-Type": "application/json"},
+        json=payload,
+        timeout=60,
+    )
+    if response.status_code == 402:
+        raise RuntimeError("Magic Hour menolak job karena kredit tidak mencukupi.")
+    response.raise_for_status()
+    created = response.json()
+    project_id = created.get("id")
+    if not project_id:
+        raise RuntimeError("Magic Hour tidak mengembalikan ID proyek.")
+    charged = created.get("credits_charged")
+
+    started = time.monotonic()
+    while time.monotonic() - started < MAX_WAIT_SECONDS:
+        time.sleep(POLL_SECONDS)
+        check = requests.get(
+            f"{MAGIC_API}/v1/video-projects/{project_id}",
+            headers=_headers(), timeout=30,
+        )
+        check.raise_for_status()
+        project = check.json()
+        status = project.get("status")
+        if status == "complete":
+            downloads = project.get("downloads") or []
+            url = downloads[0].get("url") if downloads else None
+            if not url:
+                raise RuntimeError("Job selesai tetapi tautan unduhan tidak tersedia.")
+            _download_video(url, target)
+            return {
+                "file": str(target),
+                "project_id": project_id,
+                "duration_seconds": project.get("end_seconds", CLIP_SECONDS),
+                "credits_charged": project.get("credits_charged", charged),
+                "prompt": prompt,
+            }
+        if status in ("error", "canceled"):
+            raise RuntimeError(f"Generasi Magic Hour berstatus {status}: {project.get('error')}")
+    raise RuntimeError(
+        f"Job Magic Hour {project_id} belum selesai setelah 20 menit. "
+        "Jangan kirim ulang otomatis; periksa proyek di akun Magic Hour."
+    )
 
 
-async def build_package(job_id: str, topic: str, style: str, script: str, subtitles: str,
-                        output_zip: Path, voice: str = "id-ID-ArdiNeural"):
+async def build_package(job_id: str, topic: str, style: str, script: str,
+                        subtitles: str, output_zip: Path,
+                        voice: str = "id-ID-ArdiNeural"):
     with TemporaryDirectory(prefix="aivideo_") as tmp:
         folder = Path(tmp)
-        clips = find_video_clips(topic, folder, CLIP_COUNT)
-        if len(clips) < CLIP_COUNT:
-            raise RuntimeError(
-                f"Hanya ditemukan {len(clips)} dari 12 klip video berbeda yang cocok. "
-                "Tidak memakai foto acak atau mengulang klip. Coba topik lebih sederhana atau ulangi nanti."
-            )
+        clips = []
+        warning = None
+        for index, prompt in enumerate(_prompts(topic, style), 1):
+            target = folder / f"ai_clip_{index:02d}.mp4"
+            try:
+                clips.append(_create_clip(
+                    prompt, f"AI Company - {topic[:55]} - Scene {index}", target
+                ))
+            except Exception as exc:
+                if not clips:
+                    raise
+                warning = f"Klip kedua tidak dibuat: {str(exc)[:240]}"
+                break
+
         audio = folder / "voice.mp3"
         await edge_tts.Communicate(script, voice).save(str(audio))
         (folder / "script.txt").write_text(script, encoding="utf-8")
         (folder / "subtitles.srt").write_text(subtitles, encoding="utf-8")
-        attribution = {
-            "job_id": job_id, "topic": topic, "style": style,
-            "duration_seconds": 60, "resolution": "720x1280",
-            "clip_count": CLIP_COUNT, "visual_source": "Wikimedia Commons",
-            "clips": [{k: v for k, v in item.items() if k != "file"} for item in clips],
+        metadata = {
+            "job_id": job_id,
+            "topic": topic,
+            "style": style,
+            "duration_seconds": 60,
+            "resolution": "720x1280",
+            "clip_count": len(clips),
+            "visual_source": "Magic Hour AI text-to-video",
+            "model": "default",
+            "clip_resolution": "480p",
+            "clip_duration_seconds": CLIP_SECONDS,
+            "credits_reserve_target": RESERVE_CREDITS,
+            "warning": warning,
+            "clips": [
+                {key: value for key, value in item.items() if key != "file"}
+                for item in clips
+            ],
         }
         (folder / "metadata.json").write_text(
-            json.dumps(attribution, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         output_zip.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as archive:
