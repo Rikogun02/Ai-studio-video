@@ -109,7 +109,18 @@ def collect_clips(work):
     for name in LOCAL_AI_NAMES:
         candidate = downloads / name
         if candidate.is_file() and candidate.stat().st_size > 100_000:
-            local.append(candidate)
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(candidate)],
+                capture_output=True, text=True
+            )
+            try:
+                clip_duration = float(probe.stdout.strip())
+            except (TypeError, ValueError):
+                clip_duration = 0.0
+            # Very short legacy clips loop visibly and are not used in the final cut.
+            if probe.returncode == 0 and clip_duration >= 4.5:
+                local.append(candidate)
     return packaged + local, len(packaged), len(local)
 
 
@@ -198,7 +209,7 @@ def main():
     )
     filters.append(
         "[introbg]drawtext=fontfile=" + FONT +
-        ":text='AI COMPANY':fontcolor=white:fontsize=62:"
+        ":text='RUANG GAGASAN':fontcolor=white:fontsize=62:"
         "borderw=1:bordercolor=black@0.35:x=(w-text_w)/2:"
         "y=h*0.40+22*(1-t/2.6):"
         "alpha='if(lt(t,0.55),t/0.55,if(lt(t,2.05),1,(2.6-t)/0.55))':"
@@ -206,7 +217,7 @@ def main():
     )
     filters.append(
         "[introtitle]drawtext=fontfile=" + FONT +
-        ":text='PERSPEKTIF BARU  |  LANGKAH NYATA':"
+        ":text='BERPIKIR JERNIH  |  BERTINDAK BIJAK':"
         "fontcolor=white@0.92:fontsize=22:x=(w-text_w)/2:y=h*0.48:"
         "alpha='if(lt(t,0.8),(t-0.35)/0.45,if(lt(t,2.0),1,(2.6-t)/0.6))':"
         "enable='between(t,0.35,2.6)'[intro]"
@@ -230,7 +241,7 @@ def main():
 
     filters.append(f"[{voice_index}:a]volume=1.0[voice]")
     filters.append(
-        f"[{music_index}:a]volume=0.22,afade=t=in:st=0:d=1,"
+        f"[{music_index}:a]volume=0.38,afade=t=in:st=0:d=1,"
         "afade=t=out:st=57:d=3[musicfade]"
     )
     filters.append(
@@ -250,7 +261,7 @@ def main():
     print(
         f"Video: 60 detik, 720x1280, {SCENE_COUNT} segmen, "
         f"{len(clips)} sumber AI ({packaged_count} dari paket, {local_count} dari HP), "
-        "subtitle dua baris, musik orisinal, intro dan outro animasi."
+        "subtitle tersinkron TTS, musik orisinal lebih jelas, intro dan outro animasi."
     )
     print("Catatan: segmen memakai pengulangan terkontrol jika sumber klip terbatas.")
 
