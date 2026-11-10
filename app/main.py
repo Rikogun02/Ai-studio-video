@@ -115,6 +115,8 @@ def commons_images(query: str, folder: Path):
                          "ancient Roman bust", "Roman philosophy statue"]
     elif any(word in normalized for word in ("disiplin", "discipline")):
         search_terms += ["self discipline", "focused person", "person training"]
+    elif any(word in normalized for word in ("tenang", "tekanan", "stress", "calm", "pressure", "cemas", "damai")):
+        search_terms += ["Stoicism", "Marcus Aurelius", "calm person meditation", "peaceful landscape"]
     elif any(word in normalized for word in ("motivasi", "motivation", "semangat")):
         search_terms += ["motivation", "person climbing mountain", "sunrise landscape"]
     elif any(word in normalized for word in ("bisnis", "business", "usaha")):
