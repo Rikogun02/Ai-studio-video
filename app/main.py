@@ -107,35 +107,63 @@ def make_srt(script: str, duration: int = 60) -> str:
     return "\n".join(entries)
 
 def commons_images(query: str, folder: Path):
-    params = {"action":"query","format":"json","generator":"search","gsrsearch":"filetype:bitmap "+query,
-              "gsrnamespace":6,"gsrlimit":4,"prop":"imageinfo","iiprop":"url|extmetadata","iiurlwidth":900}
-    headers = {"User-Agent":"AICompanyVideoStudio/0.1 (personal project)"}
-    r = requests.get("https://commons.wikimedia.org/w/api.php", params=params, headers=headers, timeout=25)
-    r.raise_for_status()
-    pages = (r.json().get("query") or {}).get("pages") or {}
-    results = []
-    for page in pages.values():
-        info = (page.get("imageinfo") or [{}])[0]
-        url = info.get("thumburl") or info.get("url")
-        if not url:
-            continue
+    # Try the user's exact topic first, then English/topic-specific alternatives.
+    normalized = query.lower()
+    search_terms = [query, query.replace("-", " ").strip()]
+    if any(word in normalized for word in ("stoik", "stoic", "stoicism")):
+        search_terms += ["Stoicism", "Stoic philosophy", "Marcus Aurelius",
+                         "ancient Roman bust", "Roman philosophy statue"]
+    elif any(word in normalized for word in ("disiplin", "discipline")):
+        search_terms += ["self discipline", "focused person", "person training"]
+    elif any(word in normalized for word in ("motivasi", "motivation", "semangat")):
+        search_terms += ["motivation", "person climbing mountain", "sunrise landscape"]
+    elif any(word in normalized for word in ("bisnis", "business", "usaha")):
+        search_terms += ["business meeting", "small business owner", "entrepreneur"]
+    elif any(word in normalized for word in ("trading", "saham", "crypto", "kripto")):
+        search_terms += ["financial market trading", "stock market", "computer trading chart"]
+    # Preserve order and avoid duplicate requests.
+    search_terms = list(dict.fromkeys(term for term in search_terms if term))[:6]
+    headers = {"User-Agent": "AICompanyVideoStudio/0.2 (personal project)"}
+    results, seen = [], set()
+    for term in search_terms:
+        if len(results) >= 4:
+            break
+        params = {"action": "query", "format": "json", "generator": "search",
+                  "gsrsearch": "filetype:bitmap " + term, "gsrnamespace": 6,
+                  "gsrlimit": 10, "prop": "imageinfo", "iiprop": "url|extmetadata",
+                  "iiurlwidth": 900}
         try:
-            img = requests.get(url, headers=headers, timeout=25)
-            img.raise_for_status()
-            ext = ".jpg" if "jpeg" in img.headers.get("content-type","") else ".png"
-            path = folder / f"visual_{len(results)+1}{ext}"
-            path.write_bytes(img.content)
-            meta = info.get("extmetadata") or {}
-            results.append({"file":str(path),"title":page.get("title",""),
-                            "source":info.get("descriptionurl",url),
-                            "license":(meta.get("LicenseShortName") or {}).get("value","Check source page"),
-                            "artist":(meta.get("Artist") or {}).get("value","")})
-            if len(results) == 4:
-                break
+            r = requests.get("https://commons.wikimedia.org/w/api.php",
+                             params=params, headers=headers, timeout=25)
+            r.raise_for_status()
+            pages = (r.json().get("query") or {}).get("pages") or {}
         except Exception:
             continue
+        for page in pages.values():
+            info = (page.get("imageinfo") or [{}])[0]
+            url = info.get("thumburl") or info.get("url")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            try:
+                img = requests.get(url, headers=headers, timeout=25)
+                img.raise_for_status()
+                content_type = img.headers.get("content-type", "").lower()
+                if not content_type.startswith("image/"):
+                    continue
+                ext = ".jpg" if "jpeg" in content_type else ".png"
+                path = folder / f"visual_{len(results)+1}{ext}"
+                path.write_bytes(img.content)
+                meta = info.get("extmetadata") or {}
+                results.append({"file": str(path), "title": page.get("title", ""),
+                                "source": info.get("descriptionurl", url),
+                                "license": (meta.get("LicenseShortName") or {}).get("value", "Check source page"),
+                                "artist": (meta.get("Artist") or {}).get("value", "")})
+                if len(results) >= 4:
+                    break
+            except Exception:
+                continue
     return results
-
 async def render(job_id: str, topic: str, style: str):
     global BUSY
     folder = JOBS / job_id
