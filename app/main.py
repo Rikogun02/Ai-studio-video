@@ -74,7 +74,7 @@ def make_script(topic: str, style: str) -> str:
 
 def make_srt(script: str, duration: int = 60) -> str:
     # Divide narration into readable caption chunks and distribute them across 60 seconds.
-    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\\s+", script) if x.strip()]
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", script) if x.strip()]
     if not sentences:
         sentences = [script.strip()]
     chunks = []
