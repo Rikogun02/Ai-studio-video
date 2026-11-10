@@ -121,15 +121,24 @@ async def render(job_id: str, topic: str, style: str):
         for item in visuals:
             inputs += ["-loop","1","-t",str(60/len(visuals)),"-i",item["file"]]
         inputs += ["-i",str(audio)]
+        music_file = Path(os.getenv("MUSIC_FILE", str(DATA / "music" / "background.mp3")))
+        has_music = music_file.is_file()
+        if has_music:
+            inputs += ["-stream_loop","-1","-i",str(music_file)]
         filters = []
         labels = []
         for i in range(len(visuals)):
-            filters.append(f"[{i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,zoompan=z='min(zoom+0.0008,1.08)':d=150:s=720x1280:fps=25,trim=duration={60/len(visuals):.3f},setpts=PTS-STARTPTS[v{i}]")
+            filters.append(f"[{i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,zoompan=z='min(zoom+0.0008,1.08)':d={int(60/len(visuals)*25)}:s=720x1280:fps=25,trim=duration={60/len(visuals):.3f},setpts=PTS-STARTPTS[v{i}]")
             labels.append(f"[v{i}]")
         filters.append("".join(labels)+f"concat=n={len(visuals)}:v=1:a=0,format=yuv420p[vout]")
+        if has_music:
+            music_index = len(visuals) + 1
+            filters.append(f"[{len(visuals)}:a]volume=1.0[voice];[{music_index}:a]volume=0.12[music];[voice][music]amix=inputs=2:duration=first:dropout_transition=2[aout]")
+        else:
+            filters.append(f"[{len(visuals)}:a]anull[aout]")
         filter_complex = ";".join(filters)
         out = folder/"video.mp4"
-        cmd = ["ffmpeg","-y",*inputs,"-filter_complex",filter_complex,"-map","[vout]","-map",f"{len(visuals)}:a",
+        cmd = ["ffmpeg","-y",*inputs,"-filter_complex",filter_complex,"-map","[vout]","-map","[aout]",
                "-t","60","-r","25","-c:v","libx264","-preset","ultrafast","-b:v","1800k","-c:a","aac","-b:a","128k","-shortest",str(out)]
         run(cmd)
         metadata = {"topic":topic,"style":style,"duration_seconds":60,"resolution":"720x1280",
