@@ -58,13 +58,17 @@ def make_script(topic: str, style: str) -> str:
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": "Bearer " + key},
                 json={"model": os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-                      "messages":[{"role":"system","content":"Tulis naskah video bahasa Indonesia sekitar 115-130 kata untuk voice over 60 detik. Tanpa judul, tanpa bullet, kalimat natural dan kuat."},
+                      "messages":[{"role":"system","content":"Tulis naskah video HANYA dalam bahasa Indonesia yang alami. Sekitar 115-130 kata untuk narasi 60 detik. Dilarang memakai kata, kalimat, judul, atau istilah bahasa Inggris. Jangan menulis judul, bullet, label, atau catatan. Gunakan kalimat lisan yang natural dan kuat."},
                                  {"role":"user","content":"Topik: "+topic+". Gaya: "+style}],
                       "temperature":0.7},
                 timeout=35)
             r.raise_for_status()
             text = r.json()["choices"][0]["message"]["content"].strip()
-            if len(text.split()) >= 70:
+            english_markers = re.findall(
+                r"\\b(?:the|and|with|your|you|is|are|this|that|for|from|because|when|what|how|life|focus|mindset|success|discipline|control|people|their|they|will|should)\\b",
+                text, flags=re.IGNORECASE
+            )
+            if len(text.split()) >= 70 and len(english_markers) < 2:
                 return text
         except Exception:
             pass
@@ -277,8 +281,7 @@ async def prepare_termux_package(package_id: str, topic: str, style: str):
     output = DATA / "packages" / f"{package_id}.zip"
     try:
         script = make_script(topic, style)
-        subtitles = make_srt(script, 60)
-        await build_package(package_id, topic, style, script, subtitles, output,
+        await build_package(package_id, topic, style, script, output,
                             os.getenv("VOICE", "id-ID-ArdiNeural"))
         PACKAGE_STATE[package_id] = {"status": "completed", "message": "Paket produksi siap diunduh"}
     except Exception as exc:
