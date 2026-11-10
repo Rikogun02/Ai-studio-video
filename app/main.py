@@ -72,6 +72,38 @@ def make_script(topic: str, style: str) -> str:
             "Hidup tidak menuntut kita mengendalikan segalanya. Hidup mengajak kita bertindak bijak di tengah ketidakpastian. "
             "Fokus pada proses. Jaga prinsip. Biarkan hasil mengikuti usaha yang konsisten.")
 
+def make_srt(script: str, duration: int = 60) -> str:
+    # Divide narration into readable caption chunks and distribute them across 60 seconds.
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\\s+", script) if x.strip()]
+    if not sentences:
+        sentences = [script.strip()]
+    chunks = []
+    for sentence in sentences:
+        words = sentence.split()
+        while len(words) > 12:
+            chunks.append(" ".join(words[:12]))
+            words = words[12:]
+        if words:
+            chunks.append(" ".join(words))
+    if not chunks:
+        chunks = [script.strip()]
+    weights = [max(1, len(x.split())) for x in chunks]
+    total = sum(weights)
+    cursor = 0.0
+    entries = []
+    for index, (chunk, weight) in enumerate(zip(chunks, weights), 1):
+        start = cursor
+        cursor += duration * weight / total
+        end = min(float(duration), cursor)
+        def stamp(value):
+            ms = int(round(value * 1000))
+            hours, ms = divmod(ms, 3600000)
+            minutes, ms = divmod(ms, 60000)
+            seconds, millis = divmod(ms, 1000)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+        entries.append(f"{index}\\n{stamp(start)} --> {stamp(end)}\\n{chunk}\\n")
+    return "\\n".join(entries)
+
 def commons_images(query: str, folder: Path):
     params = {"action":"query","format":"json","generator":"search","gsrsearch":"filetype:bitmap "+query,
               "gsrnamespace":6,"gsrlimit":4,"prop":"imageinfo","iiprop":"url|extmetadata","iiurlwidth":900}
@@ -111,6 +143,7 @@ async def render(job_id: str, topic: str, style: str):
             raise RuntimeError("FFmpeg belum terpasang di server.")
         script = make_script(topic, style)
         (folder/"script.txt").write_text(script, encoding="utf-8")
+        (folder/"subtitles.srt").write_text(make_srt(script), encoding="utf-8")
         audio = folder/"voice.mp3"
         await edge_tts.Communicate(script, os.getenv("VOICE","id-ID-ArdiNeural")).save(str(audio))
         visuals = commons_images(topic, folder)
@@ -144,7 +177,7 @@ async def render(job_id: str, topic: str, style: str):
         metadata = {"topic":topic,"style":style,"duration_seconds":60,"resolution":"720x1280",
                     "visuals":[{k:v for k,v in x.items() if k!="file"} for x in visuals]}
         (folder/"metadata.json").write_text(json.dumps(metadata,ensure_ascii=False,indent=2),encoding="utf-8")
-        STATE[job_id] = {"status":"completed","message":"Video selesai dibuat","video":f"/download/{job_id}","metadata":metadata}
+        STATE[job_id] = {"status":"completed","message":"Video selesai dibuat","video":f"/download/{job_id}","subtitles":f"/subtitles/{job_id}","metadata":metadata}
     except Exception as e:
         STATE[job_id] = {"status":"failed","message":str(e)}
     finally:
@@ -178,6 +211,16 @@ def get_job(job_id: str, x_studio_token: str = Header(default="")):
     if not re.fullmatch(r"[a-f0-9]{12}",job_id):
         raise HTTPException(400,"ID job tidak valid")
     return STATE.get(job_id,{"status":"unknown","message":"Job tidak ditemukan di sesi server ini"})
+
+@app.get("/subtitles/{job_id}")
+def subtitles(job_id: str, x_studio_token: str = Header(default="")):
+    auth(x_studio_token)
+    if not re.fullmatch(r"[a-f0-9]{12}",job_id):
+        raise HTTPException(400,"ID job tidak valid")
+    path = JOBS/job_id/"subtitles.srt"
+    if not path.is_file():
+        raise HTTPException(404,"Subtitle belum tersedia")
+    return FileResponse(path,media_type="application/x-subrip",filename=f"subtitles-{job_id}.srt")
 
 @app.get("/download/{job_id}")
 def download(job_id: str, x_studio_token: str = Header(default="")):
