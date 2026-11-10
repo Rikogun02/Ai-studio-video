@@ -15,14 +15,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field\nfrom app.termux_package import build_package
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 JOBS = DATA / "jobs"
 TMP = DATA / "tmp"
-for folder in (JOBS, TMP, DATA / "assets", DATA / "music"):
+for folder in (JOBS, TMP, DATA / "assets", DATA / "music", DATA / "packages"):
     folder.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="AI Company Video Studio", version="0.1.0")
@@ -263,3 +263,22 @@ def download(job_id: str, x_studio_token: str = Header(default="")):
     if not path.is_file():
         raise HTTPException(404,"Video belum tersedia")
     return FileResponse(path,media_type="video/mp4",filename=f"video-{job_id}.mp4")
+
+
+@app.post("/api/packages")
+async def create_termux_package(req: CreateRequest, x_studio_token: str = Header(default="")):
+    """Prepare script, narration, subtitles and relevant video clips for local Termux rendering."""
+    auth(x_studio_token)
+    package_id = uuid.uuid4().hex[:12]
+    output = DATA / "packages" / f"{package_id}.zip"
+    script = make_script(req.topic, req.style)
+    subtitles = make_srt(script, 60)
+    try:
+        await build_package(package_id, req.topic, req.style, script, subtitles, output,
+                            os.getenv("VOICE", "id-ID-ArdiNeural"))
+    except Exception as exc:
+        if output.exists():
+            output.unlink()
+        raise HTTPException(502, f"Gagal menyiapkan paket: {str(exc)}")
+    return FileResponse(output, media_type="application/zip",
+                        filename=f"ai-company-video-{package_id}.zip")
