@@ -1,68 +1,119 @@
 import json
-import re
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
 import requests
 import edge_tts
 
-HEADERS = {"User-Agent": "AICompanyVideoStudio/1.0 (personal project)"}
+API = "https://commons.wikimedia.org/w/api.php"
+HEADERS = {
+    "User-Agent": "AICompanyVideoStudio/1.1 (https://github.com/Rikogun02/Ai-studio-video)",
+    "Accept": "application/json",
+}
 VIDEO_EXTS = (".mp4", ".webm", ".ogv", ".ogg", ".mov")
+MAX_CLIP_BYTES = 35 * 1024 * 1024
+
+
+def topic_search_terms(topic: str):
+    low = topic.lower()
+    if any(x in low for x in ("stoik", "stoic", "tenang", "mental", "disiplin", "motivasi", "emosi")):
+        return ["sunrise", "mountain", "ocean", "forest", "walking", "meditation", "sunset", "waves", "nature"]
+    if any(x in low for x in ("bisnis", "usaha", "uang", "kerja", "karier", "business")):
+        return ["business", "office", "teamwork", "computer", "city", "factory", "working", "technology"]
+    if any(x in low for x in ("trading", "saham", "crypto", "kripto", "bitcoin", "market")):
+        return ["stock exchange", "financial market", "computer", "data center", "city", "technology", "business"]
+    words = [w for w in topic.split() if len(w) > 4][:3]
+    return words + ["nature", "city", "people", "technology", "landscape"]
+
+
+def _search_video_pages(term: str):
+    params = {
+        "action": "query",
+        "format": "json",
+        "generator": "search",
+        "gsrsearch": f"filetype:video {term}",
+        "gsrnamespace": 6,
+        "gsrlimit": 50,
+        "prop": "imageinfo",
+        "iiprop": "url|mime|size|extmetadata",
+    }
+    response = requests.get(API, params=params, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    if data.get("error"):
+        raise RuntimeError(data["error"].get("info", "Commons API error"))
+    return list((data.get("query") or {}).get("pages", {}).values())
+
+
+def _download_clip(url: str, target: Path):
+    with requests.get(url, headers=HEADERS, timeout=(15, 60), stream=True) as response:
+        response.raise_for_status()
+        length = response.headers.get("Content-Length")
+        if length and int(length) > MAX_CLIP_BYTES:
+            return False
+        total = 0
+        with target.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_CLIP_BYTES:
+                    output.close()
+                    target.unlink(missing_ok=True)
+                    return False
+                output.write(chunk)
+        if total < 100_000:
+            target.unlink(missing_ok=True)
+            return False
+    return True
+
 
 def find_video_clips(topic: str, folder: Path, limit: int = 3):
-    terms = [topic]
-    low = topic.lower()
-    if any(x in low for x in ("stoik", "stoic", "tenang", "mental", "disiplin", "motivasi")):
-        terms += ["sunrise nature landscape", "person walking mountain", "calm ocean waves"]
-    elif any(x in low for x in ("bisnis", "usaha", "uang", "kerja", "karier")):
-        terms += ["business teamwork office", "city timelapse", "working hands computer"]
-    elif any(x in low for x in ("trading", "saham", "crypto", "kripto", "bitcoin")):
-        terms += ["financial market stock exchange", "computer data screens", "city at night timelapse"]
-    else:
-        terms += ["cinematic nature landscape", "city timelapse", "person walking outdoors"]
     found, seen = [], set()
-    for term in terms:
+    errors = []
+    for term in topic_search_terms(topic):
         if len(found) >= limit:
             break
-        params = {
-            "action": "query", "format": "json", "generator": "search",
-            "gsrsearch": "filetype:video " + term, "gsrnamespace": 6,
-            "gsrlimit": 20, "prop": "imageinfo", "iiprop": "url|extmetadata"
-        }
         try:
-            response = requests.get("https://commons.wikimedia.org/w/api.php",
-                                    params=params, headers=HEADERS, timeout=25)
-            response.raise_for_status()
-            pages = (response.json().get("query") or {}).get("pages") or {}
-        except Exception:
+            pages = _search_video_pages(term)
+        except Exception as exc:
+            errors.append(f"{term}: {str(exc)[:120]}")
             continue
-        for page in pages.values():
+        for page in pages:
             info = (page.get("imageinfo") or [{}])[0]
             url = info.get("url", "")
-            if not url or not url.lower().split("?")[0].endswith(VIDEO_EXTS) or url in seen:
+            mime = (info.get("mime") or "").lower()
+            clean_url = url.lower().split("?")[0]
+            if not url or url in seen:
+                continue
+            if not (mime.startswith("video/") or clean_url.endswith(VIDEO_EXTS)):
                 continue
             seen.add(url)
+            suffix = Path(clean_url).suffix.lower()
+            if suffix not in VIDEO_EXTS:
+                suffix = ".webm" if "webm" in mime else ".ogv"
+            target = folder / f"clip_{len(found)+1}{suffix}"
             try:
-                media = requests.get(url, headers=HEADERS, timeout=60)
-                media.raise_for_status()
-                if len(media.content) < 100_000:
+                if not _download_clip(url, target):
                     continue
-                suffix = Path(url.split("?")[0]).suffix.lower()
-                target = folder / f"clip_{len(found)+1}{suffix}"
-                target.write_bytes(media.content)
                 meta = info.get("extmetadata") or {}
                 found.append({
                     "file": str(target),
                     "title": page.get("title", ""),
                     "source": info.get("descriptionurl", url),
                     "license": (meta.get("LicenseShortName") or {}).get("value", "Check source page"),
-                    "artist": (meta.get("Artist") or {}).get("value", "")
+                    "artist": (meta.get("Artist") or {}).get("value", ""),
                 })
                 if len(found) >= limit:
                     break
             except Exception:
+                target.unlink(missing_ok=True)
                 continue
+    if len(found) < limit and errors and not found:
+        raise RuntimeError("Pencarian Wikimedia Commons gagal: " + "; ".join(errors[:2]))
     return found
+
 
 async def build_package(job_id: str, topic: str, style: str, script: str, subtitles: str,
                         output_zip: Path, voice: str = "id-ID-ArdiNeural"):
@@ -70,7 +121,10 @@ async def build_package(job_id: str, topic: str, style: str, script: str, subtit
         folder = Path(tmp)
         clips = find_video_clips(topic, folder, 3)
         if len(clips) < 3:
-            raise RuntimeError(f"Hanya ditemukan {len(clips)} klip video yang cocok. Butuh 3 klip. Tidak memakai foto acak.")
+            raise RuntimeError(
+                f"Hanya ditemukan {len(clips)} klip video yang cocok. Butuh 3 klip. "
+                "Tidak memakai foto acak. Coba topik lebih sederhana atau ulangi beberapa saat lagi."
+            )
         audio = folder / "voice.mp3"
         await edge_tts.Communicate(script, voice).save(str(audio))
         (folder / "script.txt").write_text(script, encoding="utf-8")
@@ -79,9 +133,11 @@ async def build_package(job_id: str, topic: str, style: str, script: str, subtit
             "job_id": job_id, "topic": topic, "style": style,
             "duration_seconds": 60, "resolution": "720x1280",
             "visual_source": "Wikimedia Commons",
-            "clips": [{k: v for k, v in item.items() if k != "file"} for item in clips]
+            "clips": [{k: v for k, v in item.items() if k != "file"} for item in clips],
         }
-        (folder / "metadata.json").write_text(json.dumps(attribution, ensure_ascii=False, indent=2), encoding="utf-8")
+        (folder / "metadata.json").write_text(
+            json.dumps(attribution, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         output_zip.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(audio, "voice.mp3")
