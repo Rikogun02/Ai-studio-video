@@ -273,7 +273,7 @@ def download(job_id: str, x_studio_token: str = Header(default="")):
     return FileResponse(path,media_type="video/mp4",filename=f"video-{job_id}.mp4")
 
 
-async def prepare_termux_package(package_id: str, topic: str, style: str):
+async async def prepare_termux_package(package_id: str, topic: str, style: str):
     output = DATA / "packages" / f"{package_id}.zip"
     try:
         script = make_script(topic, style)
