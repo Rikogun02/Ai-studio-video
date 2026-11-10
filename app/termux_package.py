@@ -113,7 +113,7 @@ def _create_clip(prompt: str, name: str, target: Path):
         "aspect_ratio": "9:16",
         "style": {"prompt": prompt},
         "name": name,
-        "model": "default",
+        "model": "ltx-2.5",
         "resolution": "480p",
     }
     response = requests.post(
