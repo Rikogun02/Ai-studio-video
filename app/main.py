@@ -37,7 +37,9 @@ class CreateRequest(BaseModel):
 
 def auth(token: str = Header(default="")):
     expected = os.getenv("STUDIO_TOKEN", "").strip()
-    if expected and token != expected:
+    if not expected:
+        raise HTTPException(503, "STUDIO_TOKEN belum dikonfigurasi di server")
+    if token != expected:
         raise HTTPException(401, "Token akses tidak valid")
 
 def run(cmd):
@@ -161,7 +163,7 @@ async def render(job_id: str, topic: str, style: str):
         filters = []
         labels = []
         for i in range(len(visuals)):
-            filters.append(f"[{i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,zoompan=z='min(zoom+0.0008,1.08)':d={int(60/len(visuals)*25)}:s=720x1280:fps=25,trim=duration={60/len(visuals):.3f},setpts=PTS-STARTPTS[v{i}]")
+            filters.append(f"[{i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,zoompan=z='min(zoom+0.0008,1.08)':d=1:s=720x1280:fps=25,trim=duration={60/len(visuals):.3f},setpts=PTS-STARTPTS[v{i}]")
             labels.append(f"[v{i}]")
         filters.append("".join(labels)+f"concat=n={len(visuals)}:v=1:a=0,format=yuv420p[vout]")
         if has_music:
