@@ -1,7 +1,7 @@
 name: Validate video studio
 on:
   push:
-    branches: [main, termux-render-v1]
+    branches: [main, termux-render-v1, magichour-ai-footage-v1]
   pull_request:
     branches: [main]
 jobs:
