@@ -58,18 +58,18 @@ def main():
         filters.append(f"{current}format=yuv420p[vbase]")
 
     # Create original ambient music locally; no external music API or paid asset.
-    music_expr = "sine=frequency=110:duration=60,volume=0.035"
+    music_expr = "0.018*sin(2*PI*110*t)+0.012*sin(2*PI*164.81*t)+0.010*sin(2*PI*220*t)+0.006*sin(2*PI*329.63*t):s=44100:d=60"
     filters.append(
         "[vbase]trim=duration=60,setpts=PTS-STARTPTS,"
         "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill:enable='between(t,0,2)+between(t,56,60)'[shade]"
     )
     filters.append(
-        "[shade]drawtext=text='{}':fontcolor=white:fontsize=42:x=(w-text_w)/2:"
+        "[shade]drawtext=fontfile=/system/fonts/Roboto-Regular.ttf:text='{}':fontcolor=white:fontsize=42:x=(w-text_w)/2:"
         "y=h*0.40:alpha='if(lt(t,1),t,if(lt(t,2),1,0))':enable='between(t,0,2)'[intro]"
         .format("AI COMPANY")
     )
     filters.append(
-        "[intro]drawtext=text='{}':fontcolor=white:fontsize=38:x=(w-text_w)/2:"
+        "[intro]drawtext=fontfile=/system/fonts/Roboto-Regular.ttf:text='{}':fontcolor=white:fontsize=38:x=(w-text_w)/2:"
         "y=h*0.42:alpha='if(lt(t,57),(t-56),if(lt(t,59),1,1-(t-59)))':"
         "enable='between(t,56,60)'[vout]".format("JAGA PRINSIP. TERUS BERTUMBUH.")
     )
