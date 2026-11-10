@@ -1,20 +1,26 @@
 # AI Company Video Studio
 
-Browser-based studio that prepares a production package for local rendering on Android/Termux.
+Browser-based studio that prepares an AI-video production package for local rendering on Android/Termux.
 
 ## Production flow
 1. Open the private Studio dashboard and enter a topic.
-2. Studio creates an Indonesian narration, SRT subtitles, and searches Wikimedia Commons for relevant video clips.
-3. Download the ZIP package to the phone.
-4. Render the final vertical MP4 locally in Termux using FFmpeg.
+2. Studio creates an Indonesian narration and readable SRT subtitles.
+3. Magic Hour generates up to two topic-directed AI video clips at 480p and 9:16.
+4. Download the ZIP package to the phone.
+5. Render the final 60-second vertical MP4 locally in Termux using FFmpeg.
 
 ## Target output
-- 60 seconds, vertical 720x1280 (720p)
-- Indonesian voice-over
-- Three relevant video clips, no random-photo fallback
-- Crossfade scene transitions
-- Locally synthesized ambient background tone (no paid music API)
-- Animated title intro and closing text
+- 60 seconds, vertical 720x1280
+- Indonesian Edge TTS voice-over
+- Up to two fresh Magic Hour AI video clips
+- Optionally reuses the three previously generated AI clips if these exact files exist in Android Downloads:
+  - `output (1).mp4`
+  - `output (2).mp4`
+  - `output (3).mp4`
+- Twelve edited scene segments with crossfade transitions. If only a few source clips are available, segments repeat them with controlled cuts; this is not twelve unique generations.
+- Original instrumental backing audio synthesized locally (no stock music asset)
+- Centered subtitles limited to two lines
+- Animated title intro and closing outro
 - MP4 saved to `~/storage/downloads/AICompanyVideo.mp4`
 
 ## Termux setup
@@ -38,14 +44,15 @@ Optional output path:
 python render.py ai-company-video-package.zip --output ~/storage/downloads/video-saya.mp4
 ```
 
-## Visual source and licensing
-Video clips are searched on Wikimedia Commons. The Studio intentionally fails if it cannot find three suitable video clips rather than silently substituting unrelated photos. Each package contains `metadata.json` with source page, creator, and license details. Review those terms and attribution requirements before publishing.
+## Magic Hour and credit safety
+- Set `MAGIC_HOUR_API_KEY` in the server's private `.env` file. Never commit or share the real key.
+- The package builder checks the account balance before each request, targets a 72-credit reserve, and creates clips sequentially.
+- The estimate is 24 credits per second; actual charges depend on Magic Hour's response and may differ. The reserve is a target, not a guaranteed maximum spend.
+- The builder does not automatically retry a timed-out generation request, because the provider may already have accepted and charged it.
+- Free-tier resolution and model availability are controlled by Magic Hour and may change.
 
-## Free services and limitations
-- Uses Wikimedia Commons and Edge TTS; no paid video API is required.
-- The ambient backing tone is synthesized locally. It is not a licensed commercial music track.
-- This is a stock-footage montage, not guaranteed generative AI video footage.
-- Availability and relevance of Commons video clips vary by topic.
+## Audio and visual notes
+The generated backing track is an original local synthesis, not a commercial music recording. The final video uses AI-generated footage only; no Wikimedia or random-photo fallback is included. The three optional phone clips are reused only if their exact filenames are present.
 
 ## Server safety
-The new `/api/packages` endpoint only prepares the ZIP package. Final FFmpeg rendering happens on the phone, reducing load on the VPS. Existing server services should not be modified as part of the rendering workflow.
+The `/api/packages` endpoint prepares the ZIP package. Final FFmpeg rendering stays on the phone. The legacy `/api/jobs` endpoint is left unchanged.
