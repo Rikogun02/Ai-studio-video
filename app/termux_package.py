@@ -69,8 +69,8 @@ async def build_package(job_id: str, topic: str, style: str, script: str, subtit
     with TemporaryDirectory(prefix="aivideo_") as tmp:
         folder = Path(tmp)
         clips = find_video_clips(topic, folder, 3)
-        if not clips:
-            raise RuntimeError("Tidak ditemukan video relevan dari Wikimedia Commons. Tidak memakai foto acak.")
+        if len(clips) < 3:
+            raise RuntimeError(f"Hanya ditemukan {len(clips)} klip video yang cocok. Butuh 3 klip. Tidak memakai foto acak.")
         audio = folder / "voice.mp3"
         await edge_tts.Communicate(script, voice).save(str(audio))
         (folder / "script.txt").write_text(script, encoding="utf-8")
