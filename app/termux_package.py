@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import textwrap
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -162,8 +163,55 @@ def _create_clip(prompt: str, name: str, target: Path):
     )
 
 
+def _srt_stamp(seconds: float) -> str:
+    ms = max(0, int(round(seconds * 1000)))
+    hours, ms = divmod(ms, 3600000)
+    minutes, ms = divmod(ms, 60000)
+    seconds, millis = divmod(ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _subtitles_from_word_boundaries(boundaries):
+    """Build readable two-line captions using the actual TTS word timestamps."""
+    if not boundaries:
+        raise RuntimeError("TTS tidak mengirim penanda waktu kata; subtitle sinkron tidak dapat dibuat.")
+
+    groups = []
+    current = []
+    for item in boundaries:
+        word = str(item.get("text", "")).strip()
+        if not word:
+            continue
+        candidate = current + [item]
+        phrase = " ".join(str(x.get("text", "")).strip() for x in candidate)
+        wrapped = textwrap.wrap(phrase, width=30, break_long_words=False, break_on_hyphens=False)
+        if current and (len(candidate) > 7 or len(wrapped) > 2):
+            groups.append(current)
+            current = [item]
+        else:
+            current = candidate
+    if current:
+        groups.append(current)
+
+    entries = []
+    for index, group in enumerate(groups, 1):
+        phrase = " ".join(str(x.get("text", "")).strip() for x in group)
+        wrapped = textwrap.wrap(phrase, width=30, break_long_words=False, break_on_hyphens=False)
+        start = int(group[0]["offset"]) / 10_000_000
+        end = (int(group[-1]["offset"]) + int(group[-1]["duration"])) / 10_000_000
+        if end <= start:
+            continue
+        entries.append(
+            f"{index}\\n{_srt_stamp(start)} --> {_srt_stamp(end)}\\n"
+            + "\\n".join(wrapped[:2]) + "\\n"
+        )
+    if not entries:
+        raise RuntimeError("Penanda waktu TTS tidak valid; subtitle tidak dibuat.")
+    return "\\n".join(entries)
+
+
 async def build_package(job_id: str, topic: str, style: str, script: str,
-                        subtitles: str, output_zip: Path,
+                        output_zip: Path,
                         voice: str = "id-ID-ArdiNeural"):
     with TemporaryDirectory(prefix="aivideo_") as tmp:
         folder = Path(tmp)
@@ -182,7 +230,19 @@ async def build_package(job_id: str, topic: str, style: str, script: str,
                 break
 
         audio = folder / "voice.mp3"
-        await edge_tts.Communicate(script, voice).save(str(audio))
+        communicate = edge_tts.Communicate(script, voice, boundary="WordBoundary")
+        word_boundaries = []
+        with audio.open("wb") as audio_file:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_file.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    word_boundaries.append({
+                        "offset": int(chunk["offset"]),
+                        "duration": int(chunk["duration"]),
+                        "text": chunk["text"],
+                    })
+        subtitles = _subtitles_from_word_boundaries(word_boundaries)
         (folder / "script.txt").write_text(script, encoding="utf-8")
         (folder / "subtitles.srt").write_text(subtitles, encoding="utf-8")
         metadata = {
