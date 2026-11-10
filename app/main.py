@@ -101,8 +101,8 @@ def make_srt(script: str, duration: int = 60) -> str:
             minutes, ms = divmod(ms, 60000)
             seconds, millis = divmod(ms, 1000)
             return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
-        entries.append(f"{index}\\n{stamp(start)} --> {stamp(end)}\\n{chunk}\\n")
-    return "\\n".join(entries)
+        entries.append(f"{index}\n{stamp(start)} --> {stamp(end)}\n{chunk}\n")
+    return "\n".join(entries)
 
 def commons_images(query: str, folder: Path):
     params = {"action":"query","format":"json","generator":"search","gsrsearch":"filetype:bitmap "+query,
